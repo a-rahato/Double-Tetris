@@ -5,6 +5,7 @@ import argparse
 import os
 import matplotlib.pyplot as plt
 from tqdm import trange
+from datetime import datetime  # 用于生成时间戳
 
 from tetris.game import TetrisGame
 from agents.random_agent import RandomAgent
@@ -13,7 +14,8 @@ from agents.q_learning_agent import QLearningAgent
 
 def train(agent, episodes=1000):
     scores = []
-    for _ in trange(episodes):
+    # 训练循环，每一轮使用 episode 计数
+    for episode in trange(episodes):
         env = TetrisGame()
         state = env.reset()
         total_reward = 0
@@ -29,6 +31,14 @@ def train(agent, episodes=1000):
         # 探索率衰减（针对 QLearningAgent）
         if hasattr(agent, 'decay') and hasattr(agent, 'min_epsilon'):
             agent.epsilon = max(agent.epsilon * agent.decay, agent.min_epsilon)
+        # 每 10000 轮保存一次权重到历史文件夹
+        if hasattr(agent, 'save_weights') and (episode + 1) % 2500 == 0:
+            history_dir = 'weights_history'
+            os.makedirs(history_dir, exist_ok=True)
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            fname = os.path.join(history_dir, f"{agent.__class__.__name__}_weights_{ts}_ep{episode+1}.pkl")
+            agent.save_weights(fname)
+            print(f"Episode {episode+1}: 保存权重到 {fname}")
     return scores
 
 
@@ -47,7 +57,7 @@ def main():
         if os.path.exists(weight_file):
             agent.load_weights(weight_file)
             # 将 epsilon 降低至 min_epsilon，减少随机性
-            agent.epsilon = agent.min_epsilon
+            agent.epsilon /= 2
             print(f"已加载权重并将初始探索率降低至 epsilon={agent.epsilon}")
 
     scores = train(agent, episodes=args.episodes)
@@ -56,7 +66,8 @@ def main():
     plt.xlabel('Episode')
     plt.ylabel('Score')
     plt.title(f"Agent: {args.agent}")
-    plt.savefig(f"train_{args.agent}.png")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plt.savefig(f"train_{args.agent}_{timestamp}.png")
     # 保存 Q-learning 模型权重
     if hasattr(agent, 'save_weights'):
         weight_file = f"{args.agent}_weights.pkl"

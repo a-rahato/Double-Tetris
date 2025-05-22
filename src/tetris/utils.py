@@ -24,8 +24,7 @@ def clear_lines(board: np.ndarray) -> int:
 
 def extract_features(board: np.ndarray, action=None) -> dict:
     """
-    从状态和动作中提取特征，包含宏观动作 one-hot。
-    action 可为 None、int 或 (rot,x) 宏观动作。
+    从状态和动作中提取特征，用于近似 Q-learning。
     返回字典特征。
     """
     # 获取尺寸
@@ -93,16 +92,16 @@ def extract_features(board: np.ndarray, action=None) -> dict:
         'row_transitions': row_transitions / (h * w),
         'col_transitions': col_transitions / (h * w),
         'well_sums': well_sums / (h * h),
-        'complete_lines': complete_lines / h,
+        'complete_lines': complete_lines,  # 原始消行数，不归一化
     }
-    # 动作特征
+    # 动作特征: rot 和 pos one-hot
     if action is not None:
-        # 旋转索引 one-hot
+        # 旋转索引和水平位置
         if isinstance(action, tuple):
             rot, x = action
         else:
             rot, x = action, None
-        # 假设最多 4 种旋转
+        # 假设最多4种旋转
         for r in range(4):
             feats[f'rot_{r}'] = 1 if r == rot else 0
         # 水平位置 one-hot

@@ -26,9 +26,9 @@ except ImportError:
     pygame = None
 
 BLOCK_SIZE = 30  # 方块像素大小
-CLEAR_REWARD = 1  # 每行消除奖励
-GAME_OVER_PENALTY = 1000  # 游戏结束惩罚分
-SURVIVAL_REWARD = 0.1  # 每步生存奖励
+CLEAR_REWARD = 1  # 每行清除奖励
+GAME_OVER_PENALTY = 5  # 游戏结束小惩罚
+SURVIVAL_REWARD = 0  # 无生存奖励
 
 class TetrisGame:
     """代表一个俄罗斯方块游戏环境。"""
@@ -68,13 +68,18 @@ class TetrisGame:
             # 硬下落并锁定
             self._hard_drop()
             self._lock_piece()
-            # 清行并计算奖励
+            # 清行并计算奖励：仅按消行数给正收益，游戏结束给小惩罚
             lines = clear_lines(self.board)
-            reward = lines
+            if self.done:
+                reward = -GAME_OVER_PENALTY
+            else:
+                reward = lines * CLEAR_REWARD
             self.score += reward
+            # 在 spawn 前获取当前棋盘状态
+            next_obs = self.board.copy()
             # 产生下一个方块
             self._spawn_piece()
-            return self._get_observation(), reward, self.done, {}
+            return next_obs, reward, self.done, {}
         # 左移
         if action == 0:
             self._move(-1)
@@ -92,19 +97,17 @@ class TetrisGame:
         if self._collision():
             self.current_y -= 1
             self._lock_piece()
-            # 计算消行数和 aggregate_height
+            # 清行并计算奖励：仅按消行数给正收益，游戏结束给小惩罚
             lines = clear_lines(self.board)
-            heights = [self.height - np.where(self.board[:, c])[0][0] if np.any(self.board[:, c]) else 0 for c in range(self.width)]
-            agg_height = sum(heights)
-            # 组合奖励：生存 + 消行 - 高度惩罚
-            if self.done and lines == 0:
+            if self.done:
                 reward = -GAME_OVER_PENALTY
             else:
-                reward = SURVIVAL_REWARD + lines * CLEAR_REWARD - 0.01 * agg_height
+                reward = lines * CLEAR_REWARD
             self.score += reward
+            # 在 spawn 前获取下落及消行后的原始棋盘状态
+            next_obs = self.board.copy()
             self._spawn_piece()
-            done = self.done
-            return self._get_observation(), reward, done, {}
+            return next_obs, reward, self.done, {}
         # 每步生存奖励
         return self._get_observation(), SURVIVAL_REWARD, False, {}
 
