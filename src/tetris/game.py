@@ -34,6 +34,7 @@ class TetrisGame:
     """代表一个俄罗斯方块游戏环境。"""
 
     def __init__(self, width=10, height=20):
+        self.needs_spawn = False  # 标记是否待生成新方块
         self.width = width
         self.height = height
         self.board = np.zeros((self.height, self.width), dtype=int)
@@ -54,31 +55,78 @@ class TetrisGame:
         self.score = 0
         self.done = False
         self._spawn_piece()
+        self.needs_spawn = False
         return self._get_observation()
 
     def step(self, action):
         """执行一步动作：0-left,1-right,2-rotate,3-drop，或宏观动作 (rot, x) 完整放置，返回 (next_state, reward, done, info)。"""
+        # 如果已结束，直接返回惩罚
         if self.done:
             return self._get_observation(), -GAME_OVER_PENALTY, True, {}
+        # 默认None动作为软下落
+        if action is None:
+            action = 4
+        # 基础动作 integer: 左移、右移、旋转或硬下落
+        if isinstance(action, int):
+            if action == 0:
+                self._move(-1)
+            elif action == 1:
+                self._move(1)
+            elif action == 2:
+                self._rotate()
+            elif action == 3:
+                self._hard_drop()
+                self._lock_piece()
+                # 清行并奖励
+                self.board, lines = clear_lines(self.board)
+                self.lines_cleared += lines
+                reward = 1 + (lines ** 2) * self.width
+                if self.done:
+                    reward -= GAME_OVER_PENALTY
+                self.score += reward
+                next_obs = self.board.copy()
+                # 标记待生成新方块
+                self.needs_spawn = True
+                return next_obs, reward, self.done, {}
+            elif action == 4:
+                # 软下落：下移一格，若碰撞则锁定
+                old_y = self.current_y
+                self.current_y += 1
+                if self._collision():
+                    self.current_y = old_y
+                    self._lock_piece()
+                    # 清行并奖励
+                    self.board, lines = clear_lines(self.board)
+                    self.lines_cleared += lines
+                    reward = 1 + (lines ** 2) * self.width
+                    if self.done:
+                        reward -= GAME_OVER_PENALTY
+                    self.score += reward
+                    next_obs = self.board.copy()
+                    # 标记待生成新方块
+                    self.needs_spawn = True
+                    return next_obs, reward, self.done, {}
+                # 未锁定，无即时奖励
+                return self._get_observation(), SURVIVAL_REWARD, self.done, {}
+            # 非硬下落的基础动作无即时奖励
+            # 这里不应到达
+            return self._get_observation(), SURVIVAL_REWARD, self.done, {}
         # 宏观动作: (rotation_index, x_target) -> 直接放置当前方块
         rot, x = action
-        # 设置旋转和位置
         self.current_rot = rot % len(PIECES[self.current_piece])
         self.current_x = x
-        # 硬下落并锁定
         self._hard_drop()
         self._lock_piece()
-        # 清行并计算奖励：仅按消行数给正收益，游戏结束给小惩罚
+        # 清行并计算奖励
         self.board, lines = clear_lines(self.board)
         self.lines_cleared += lines
         reward = 1 + (lines ** 2) * self.width
         if self.done:
             reward -= GAME_OVER_PENALTY
         self.score += reward
-        # 在 spawn 前获取当前棋盘状态
         next_obs = self.board.copy()
-        # 产生下一个方块
-        self._spawn_piece()
+        # 标记待生成
+        self.needs_spawn = True
         return next_obs, reward, self.done, {}
 
     def render(self, mode='text', delay=20):
@@ -226,3 +274,131 @@ class TetrisGame:
                             self.done = True
                         # 写入方块ID
                         self.board[y, x] = PIECE_IDS[self.current_piece]
+
+class DoubleTetrisGame:
+    """代表双区域同时游戏，每区域独立生成方块，操作同步。"""
+    def __init__(self, width=10, height=20):
+        from .game import TetrisGame
+        import pygame
+        # 初始化两个单区游戏
+        self.game1 = TetrisGame(width, height)
+        self.game2 = TetrisGame(width, height)
+        # GUI 属性
+        self.screen = None
+        self.font = None
+        self.width = width
+        self.height = height
+        self.block_size = BLOCK_SIZE
+
+    def reset(self):
+        """重置两个游戏并返回拼接后的初始观测。"""
+        obs1 = self.game1.reset()
+        obs2 = self.game2.reset()
+        # 横向拼接
+        return np.hstack([obs1, obs2])
+
+    def step(self, action):
+        """同步执行动作到两个游戏，返回拼接观测、总奖励、结束状态和信息字典。"""
+       
+        # 执行step或暂停，累计结果
+        # 如果游戏已结束或待spawn，则跳过step，返回静态状态
+        if self.game1.done or self.game1.needs_spawn:
+            obs1, r1, d1, info1 = self.game1.board.copy(), 0, self.game1.done, {}
+        else:
+            obs1, r1, d1, info1 = self.game1.step(action)
+        if self.game2.done or self.game2.needs_spawn:
+            obs2, r2, d2, info2 = self.game2.board.copy(), 0, self.game2.done, {}
+        else:
+            obs2, r2, d2, info2 = self.game2.step(action)
+        # 如果任一区结束，立即结束两区
+        if self.game1.done or self.game2.done:
+            self.game1.done = True
+            self.game2.done = True
+        # 当两侧都锁定后同时spawn新方块（在未结束时）
+        if not self.game1.done and self.game1.needs_spawn and self.game2.needs_spawn:
+            self.game1._spawn_piece(); self.game1.needs_spawn = False
+            self.game2._spawn_piece(); self.game2.needs_spawn = False
+        # 总奖励
+        total_reward = r1 + r2
+        # 整体结束只要有一侧结束
+        done = self.game1.done or self.game2.done
+        # 合并观测
+        obs = np.hstack([obs1, obs2])
+        info = {'game1': info1, 'game2': info2}
+        return obs, total_reward, done, info
+
+    def render(self, mode='text', delay=20):
+        """渲染当前游戏状态。mode 支持 'text' 或 'gui'. delay 为 GUI 延迟(ms)。"""
+        if mode == 'text':
+            obs1 = self.game1._get_observation()
+            obs2 = self.game2._get_observation()
+            for row1, row2 in zip(obs1, obs2):
+                line1 = ''.join('█' if x else '·' for x in row1)
+                line2 = ''.join('█' if x else '·' for x in row2)
+                print(line1 + '  ' + line2)
+            print(f"Scores: {self.game1.score} | {self.game2.score}")
+        elif mode == 'gui':
+            import pygame
+            # 初始化 GUI 窗口
+            if self.screen is None:
+                self._init_gui()
+            # 清空背景
+            self.screen.fill((0, 0, 0))
+            # 绘制中间分隔区域（在背景层）
+            sep_w = self.block_size // 2
+            sep_x = self.width * self.block_size
+            sep_rect = pygame.Rect(sep_x, 0, sep_w, self.height * self.block_size)
+            pygame.draw.rect(self.screen, (100, 100, 100), sep_rect)
+            # 并排绘制两个棋盘及方块和文字
+            for idx, game in enumerate([self.game1, self.game2]):
+                base_x = idx * (self.width * self.block_size + sep_w)
+                # 绘制已锁定方块
+                for y in range(self.height):
+                    for x in range(self.width):
+                        code = game.board[y, x]
+                        color = ID_TO_COLOR.get(code, (50, 50, 50)) if code else (50, 50, 50)
+                        rect = pygame.Rect(base_x + x * self.block_size,
+                                            y * self.block_size,
+                                            self.block_size,
+                                            self.block_size)
+                        pygame.draw.rect(self.screen, color, rect)
+                        pygame.draw.rect(self.screen, (20, 20, 20), rect, 1)
+                # 绘制当前移动方块
+                shape = PIECES[game.current_piece][game.current_rot]
+                cp_color = PIECE_COLORS[game.current_piece]
+                for i in range(shape.shape[0]):
+                    for j in range(shape.shape[1]):
+                        if shape[i, j]:
+                            y = game.current_y + i
+                            x = game.current_x + j
+                            if 0 <= y < self.height and 0 <= x < self.width:
+                                rect = pygame.Rect(base_x + x * self.block_size,
+                                                    y * self.block_size,
+                                                    self.block_size,
+                                                    self.block_size)
+                                pygame.draw.rect(self.screen, cp_color, rect)
+                                pygame.draw.rect(self.screen, (20, 20, 20), rect, 1)
+                # 绘制分数和消行数
+                text = f"S{idx+1}: {game.score}  L{idx+1}: {game.lines_cleared}"
+                surf = self.font.render(text, True, (255, 255, 255))
+                self.screen.blit(surf, (base_x + 5, 5))
+            # 刷新显示并延迟
+            pygame.display.flip()
+            pygame.time.delay(delay)
+
+    def _init_gui(self):
+        """初始化 DoubleTetrisWindow, Pygame 窗口和字体"""
+        import pygame
+        if pygame is None:
+            raise RuntimeError('pygame 未安装，无法使用 GUI 模式')
+        if not pygame.get_init():
+            pygame.init()
+        # 分隔区域宽度
+        sep_w = self.block_size // 2
+        w = self.width * self.block_size * 2 + sep_w
+        h = self.height * self.block_size
+        self.screen = pygame.display.set_mode((w, h))
+        pygame.display.set_caption('Double Tetris')
+        if not pygame.font.get_init():
+            pygame.font.init()
+        self.font = pygame.font.SysFont(None, 24)
