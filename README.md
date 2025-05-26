@@ -7,6 +7,12 @@ conda activate cs181
 pip install -r requirements.txt
 ```
 
+## Play it !
+```bash
+python src/play.py
+```
+`Up` 旋转，`Left/Right`移动，`Space`下落
+
 ## Train
 ```bash
 python src/train.py --episodes 2000

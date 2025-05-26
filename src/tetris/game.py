@@ -60,24 +60,59 @@ class TetrisGame:
         """执行一步动作：0-left,1-right,2-rotate,3-drop，或宏观动作 (rot, x) 完整放置，返回 (next_state, reward, done, info)。"""
         if self.done:
             return self._get_observation(), -GAME_OVER_PENALTY, True, {}
-        # 宏观动作: (rotation_index, x_target) -> 直接放置当前方块
+
+        # 自然下落：action None 表示软下落一步
+        if action is None:
+            self.current_y += 1
+            if self._collision():
+                self.current_y -= 1
+                self._lock_piece()
+                self.board, lines = clear_lines(self.board)
+                self.lines_cleared += lines
+                reward = 1 + (lines ** 2) * self.width
+                if self.done:
+                    reward -= GAME_OVER_PENALTY
+                self.score += reward
+                next_obs = self.board.copy()
+                self._spawn_piece()
+                return next_obs, reward, self.done, {}
+            return self._get_observation(), SURVIVAL_REWARD, self.done, {}
+
+        # 简单动作：左右移动、旋转、一键硬下落
+        if isinstance(action, int):
+            if action == 0:
+                self._move(-1)
+            elif action == 1:
+                self._move(1)
+            elif action == 2:
+                self._rotate()
+            elif action == 3:
+                self._hard_drop()
+                self._lock_piece()
+                self.board, lines = clear_lines(self.board)
+                self.lines_cleared += lines
+                reward = 1 + (lines ** 2) * self.width
+                if self.done:
+                    reward -= GAME_OVER_PENALTY
+                self.score += reward
+                next_obs = self.board.copy()
+                self._spawn_piece()
+                return next_obs, reward, self.done, {}
+            return self._get_observation(), SURVIVAL_REWARD, self.done, {}
+
+        # 宏观动作：指定旋转和落点
         rot, x = action
-        # 设置旋转和位置
         self.current_rot = rot % len(PIECES[self.current_piece])
         self.current_x = x
-        # 硬下落并锁定
         self._hard_drop()
         self._lock_piece()
-        # 清行并计算奖励：仅按消行数给正收益，游戏结束给小惩罚
         self.board, lines = clear_lines(self.board)
         self.lines_cleared += lines
         reward = 1 + (lines ** 2) * self.width
         if self.done:
             reward -= GAME_OVER_PENALTY
         self.score += reward
-        # 在 spawn 前获取当前棋盘状态
         next_obs = self.board.copy()
-        # 产生下一个方块
         self._spawn_piece()
         return next_obs, reward, self.done, {}
 
