@@ -2,110 +2,56 @@
 utils.py: 辅助函数，包括消行函数和特征提取，用于近似 Q-learning。
 """
 import numpy as np
+from typing import Tuple
 
-def clear_lines(board: np.ndarray) -> int:
+def clear_lines(board: np.ndarray) -> tuple[np.ndarray, int]:
     """
-    清除已满的行，向上移动，返回清除的行数。
-    board 会被原地修改。
+    清除已满的行，向上移动，返回 (new_board, lines_cleared)，不修改输入。
     """
     full_rows = [i for i, row in enumerate(board) if all(row)]
     n = len(full_rows)
     if n > 0:
-        # 保留未满的行索引
         mask = [i for i in range(board.shape[0]) if i not in full_rows]
-        # 构建新棋盘，在底部放置保留下来的行
         new_board = np.zeros_like(board)
         if mask:
             new_board[-len(mask):] = board[mask]
-        # 原地更新
-        board[:] = new_board
-    return n
+    else:
+        new_board = board.copy()
+    return new_board, n
 
 
-def extract_features(board: np.ndarray, action=None) -> dict:
+def extract_features(board: np.ndarray) -> dict:
     """
-    从状态和动作中提取特征，用于近似 Q-learning。
-    返回字典特征。
+    特征：本次消行数、孔洞总数、颠簸度、总高度（不修改原棋盘）
     """
-    # 获取尺寸
+    # 复制棋盘，用于行清除和后续统计
+    board_cp = board.copy()
+    # 1. 清除满行，得到新棋盘与消行数
+    board_cp, lines_cleared = clear_lines(board_cp)
     h, w = board.shape
-    # 列高度
+    # 2. 计算各列高度（第一个填充格子之上算高度）
     heights = []
-    for col in range(w):
-        column = board[:, col]
-        # 从上到下找到第一个方块
-        idx = np.where(column)[0]
-        height = h - idx[0] if idx.size > 0 else 0
+    for j in range(w):
+        col = board_cp[:, j]
+        filled = np.where(col)[0]
+        height = h - filled[0] if filled.size > 0 else 0
         heights.append(height)
-    aggregate_height = sum(heights)
-    # 孔洞数
+    total_height = float(sum(heights))
+    # 3. 孔洞数：每列第一个填充格子之后的空格
     holes = 0
-    for col in range(board.shape[1]):
-        column = board[:, col]
-        found_block = False
-        for cell in column:
-            if cell:
-                found_block = True
-            elif found_block and not cell:
-                holes += 1
-    # 凹凸不平 (bumpiness)
-    bumpiness = sum(abs(heights[i] - heights[i+1]) for i in range(len(heights)-1))
-    # 完整消行数
-    complete_lines = sum(1 for row in board if all(row))
-
-    # 高级特征
-    max_height = max(heights)
-    mean_height = aggregate_height / w
-    var_height = np.var(heights)
-    # 行转换数 (row transitions)
-    row_transitions = 0
-    for r in range(h):
-        for c in range(w-1):
-            if (board[r, c] > 0) != (board[r, c+1] > 0):
-                row_transitions += 1
-    # 列转换数 (column transitions)
-    col_transitions = 0
-    for c in range(w):
-        for r in range(h-1):
-            if (board[r, c] > 0) != (board[r+1, c] > 0):
-                col_transitions += 1
-    # 井深度 (wells)
-    well_sums = 0
-    for c in range(w):
-        depth = 0
-        for r in range(h):
-            left = True if c == 0 else board[r, c-1] > 0
-            right = True if c == w-1 else board[r, c+1] > 0
-            if board[r, c] == 0 and left and right:
-                depth += 1
-                well_sums += depth
-            else:
-                depth = 0
-    # 原有棋面特征
-    feats = {
-        'aggregate_height': aggregate_height / (h * w),
-        'max_height': max_height / h,
-        'mean_height': mean_height / h,
-        'var_height': var_height / (h*h),
-        'holes': holes / (h * w),
-        'bumpiness': bumpiness / (h * w),
-        'row_transitions': row_transitions / (h * w),
-        'col_transitions': col_transitions / (h * w),
-        'well_sums': well_sums / (h * h),
-        'complete_lines': complete_lines,  # 原始消行数，不归一化
+    for j in range(w):
+        col = board_cp[:, j]
+        filled = np.where(col)[0]
+        if filled.size == 0:
+            continue
+        idx = filled[0]
+        holes += int(np.sum(col[idx+1:] == 0))
+    holes = float(holes)
+    # 4. 颠簸度：相邻列高度差绝对值之和
+    bumpiness = float(sum(abs(heights[i] - heights[i+1]) for i in range(w-1)))
+    return {
+        'complete_lines': float(lines_cleared),
+        'holes': holes,
+        'bumpiness': bumpiness,
+        'aggregate_height': total_height
     }
-    # 动作特征: rot 和 pos one-hot
-    if action is not None:
-        # 旋转索引和水平位置
-        if isinstance(action, tuple):
-            rot, x = action
-        else:
-            rot, x = action, None
-        # 假设最多4种旋转
-        for r in range(4):
-            feats[f'rot_{r}'] = 1 if r == rot else 0
-        # 水平位置 one-hot
-        if x is not None:
-            for col in range(w):
-                feats[f'pos_{col}'] = 1 if col == x else 0
-    return feats

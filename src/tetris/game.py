@@ -27,7 +27,7 @@ except ImportError:
 
 BLOCK_SIZE = 30  # 方块像素大小
 CLEAR_REWARD = 1  # 每行清除奖励
-GAME_OVER_PENALTY = 5  # 游戏结束小惩罚
+GAME_OVER_PENALTY = 2  # 游戏结束小惩罚
 SURVIVAL_REWARD = 0  # 无生存奖励
 
 class TetrisGame:
@@ -43,6 +43,7 @@ class TetrisGame:
         self.current_rot = 0
         self.current_x = 0
         self.current_y = 0
+        self.lines_cleared = 0
         self.screen = None
         # 初始化后立即重置
         self.reset()
@@ -58,60 +59,29 @@ class TetrisGame:
     def step(self, action):
         """执行一步动作：0-left,1-right,2-rotate,3-drop，或宏观动作 (rot, x) 完整放置，返回 (next_state, reward, done, info)。"""
         if self.done:
-            return self._get_observation(), 0, True, {}
+            return self._get_observation(), -GAME_OVER_PENALTY, True, {}
         # 宏观动作: (rotation_index, x_target) -> 直接放置当前方块
-        if isinstance(action, tuple) and len(action) == 2:
-            rot, x = action
-            # 设置旋转和位置
-            self.current_rot = rot % len(PIECES[self.current_piece])
-            self.current_x = x
-            # 硬下落并锁定
-            self._hard_drop()
-            self._lock_piece()
-            # 清行并计算奖励：仅按消行数给正收益，游戏结束给小惩罚
-            lines = clear_lines(self.board)
-            if self.done:
-                reward = -GAME_OVER_PENALTY
-            else:
-                reward = lines * CLEAR_REWARD
-            self.score += reward
-            # 在 spawn 前获取当前棋盘状态
-            next_obs = self.board.copy()
-            # 产生下一个方块
-            self._spawn_piece()
-            return next_obs, reward, self.done, {}
-        # 左移
-        if action == 0:
-            self._move(-1)
-        # 右移
-        elif action == 1:
-            self._move(1)
-        # 旋转
-        elif action == 2:
-            self._rotate()
-        # 快速下落
-        elif action == 3:
-            self._hard_drop()
-        # 自然下落一步
-        self.current_y += 1
-        if self._collision():
-            self.current_y -= 1
-            self._lock_piece()
-            # 清行并计算奖励：仅按消行数给正收益，游戏结束给小惩罚
-            lines = clear_lines(self.board)
-            if self.done:
-                reward = -GAME_OVER_PENALTY
-            else:
-                reward = lines * CLEAR_REWARD
-            self.score += reward
-            # 在 spawn 前获取下落及消行后的原始棋盘状态
-            next_obs = self.board.copy()
-            self._spawn_piece()
-            return next_obs, reward, self.done, {}
-        # 每步生存奖励
-        return self._get_observation(), SURVIVAL_REWARD, False, {}
+        rot, x = action
+        # 设置旋转和位置
+        self.current_rot = rot % len(PIECES[self.current_piece])
+        self.current_x = x
+        # 硬下落并锁定
+        self._hard_drop()
+        self._lock_piece()
+        # 清行并计算奖励：仅按消行数给正收益，游戏结束给小惩罚
+        self.board, lines = clear_lines(self.board)
+        self.lines_cleared += lines
+        reward = 1 + (lines ** 2) * self.width
+        if self.done:
+            reward -= GAME_OVER_PENALTY
+        self.score += reward
+        # 在 spawn 前获取当前棋盘状态
+        next_obs = self.board.copy()
+        # 产生下一个方块
+        self._spawn_piece()
+        return next_obs, reward, self.done, {}
 
-    def render(self, mode='text', delay=100):
+    def render(self, mode='text', delay=20):
         """渲染当前游戏状态。mode 支持 'text' 或 'gui'. delay 为 GUI 延迟(ms)。"""
         if mode == 'text':
             obs = self._get_observation()
@@ -128,14 +98,20 @@ class TetrisGame:
         """初始化 Pygame 窗口"""
         if pygame is None:
             raise RuntimeError('pygame 未安装，无法使用 GUI 模式')
+        # 初始化 pygame
         if not pygame.get_init():
             pygame.init()
-        w = self.width * BLOCK_SIZE
-        h = self.height * BLOCK_SIZE
-        self.screen = pygame.display.set_mode((w, h))
-        pygame.display.set_caption('Tetris')
-        # 初始化字体，用于渲染消行数
-        pygame.font.init()
+        # 尝试复用已有窗口
+        w, h = self.width * BLOCK_SIZE, self.height * BLOCK_SIZE
+        surface = pygame.display.get_surface()
+        if surface:
+            self.screen = surface
+        else:
+            self.screen = pygame.display.set_mode((w, h))
+            pygame.display.set_caption('Tetris')
+        # 初始化字体
+        if not pygame.font.get_init():
+            pygame.font.init()
         self.font = pygame.font.SysFont(None, 24)
 
     def _draw_gui(self):
@@ -175,8 +151,10 @@ class TetrisGame:
                         pygame.draw.rect(self.screen, cp_color, rect)
                         pygame.draw.rect(self.screen, (20, 20, 20), rect, 1)
         # 渲染消行数文本
-        text_surf = self.font.render(f"Lines: {self.score}", True, (255, 255, 255))
+        text_surf = self.font.render(f"Lines: {self.lines_cleared}", True, (255, 255, 255))
         self.screen.blit(text_surf, (5, 5))
+        text_surf = self.font.render(f"Scores: {self.score}", True, (255, 255, 255))
+        self.screen.blit(text_surf, (200, 5))
         pygame.display.flip()
 
     # 内部方法
@@ -234,6 +212,7 @@ class TetrisGame:
         return False
 
     def _lock_piece(self):
+        """将当前方块写入棋盘，并检测重叠或越界以结束游戏"""
         shape = PIECES[self.current_piece][self.current_rot]
         h, w = shape.shape
         for i in range(h):
@@ -242,5 +221,8 @@ class TetrisGame:
                     y = self.current_y + i
                     x = self.current_x + j
                     if 0 <= y < self.height and 0 <= x < self.width:
-                        # 存储 piece id 而非统一值
+                        # 检测重叠：已有方块时结束游戏
+                        if self.board[y, x] != 0:
+                            self.done = True
+                        # 写入方块ID
                         self.board[y, x] = PIECE_IDS[self.current_piece]
