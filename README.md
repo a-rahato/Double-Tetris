@@ -1,5 +1,4 @@
-# Double-Tetris
-ShanghaiTech U CS181 25Spring Artifitial Intelligence Final Project
+# Single Player Tetris DQN Agent
 
 ## Install
 ```bash
@@ -26,3 +25,7 @@ python src/train.py --episodes 5000 --epsilon 0.01 --epsilon_min 0.001  --target
 python src/evaluate.py --episodes 30 --render
 ```
 会返回`episodes`次测试的平均得分，以及最优、最劣5次的消行总数。
+
+## Reference
+
+> caohch-1: [Trtris-AI](https://github.com/caohch-1/Tetris-AI)
