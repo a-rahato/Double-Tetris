@@ -10,11 +10,19 @@ pip install -r requirements.txt
 
 ## Train
 ```bash
-python src/train.py --agent qlearn --episodes 2000
+python src/train.py --episodes 2000
 ```
-最后的数字是轮数。如果删除目录下的`*.pkl`文件会从头训练，否则是在之前的基础上训练。目录下的`train_qlean.png`可以用来观察训练过程。
+如果删除目录下的`*.pkl`文件会从头训练，否则是在之前的基础上训练。`plots`目录下的`*.png`可以用来观察训练过程。
+更多命令行参数见`train.py`
+
+## More Training
+```bash
+python src/train.py --episodes 5000 --epsilon 0.01 --epsilon_min 0.001  --target_update 1000 --lr 1e-5
+```
+从`dqn_weights.pkl`的基础上继续训练，减小epsilon的始末和学习率
 
 ## Evaluate
 ```bash
-python src/evaluate.py --agent qlearn --render
+python src/evaluate.py --episodes 30 --render
 ```
+会返回`episodes`次测试的平均得分，以及最优、最劣5次的消行总数。
