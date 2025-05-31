@@ -3,30 +3,31 @@ evaluate.py: 验证脚本，对比不同 Agent 表现并渲染示例游戏。
 """
 import argparse
 import os  # 用于加载权重
-from tetris.game import TetrisGame
+from tetris.game import TetrisGame, DoubleTetrisGame
 from agents.dqn_agent import DQNAgent  # 仅保留 DQN 验证
 
 
 def evaluate(agent, episodes=10, render=False):
-    scores = []
-    line_counts = []
+    scores1, scores2 = [], []
+    lines1, lines2 = [], []
     for _ in range(episodes):
-        env = TetrisGame()
+        env = DoubleTetrisGame()
         state = env.reset()
         total_reward = 0
         done = False
         while not done:
-            # 使用环境和状态调用宏观动作接口
             action = agent.act(state, env)
             next_state, reward, done, _ = env.step(action)
             total_reward += reward
             if render:
-                # 使用 GUI 模式渲染
                 env.render(mode='gui')
-        scores.append(total_reward)
-        # 记录本轮消除行数
-        line_counts.append(env.lines_cleared)
-    return scores, line_counts
+        # 分别记录两侧分数和消行
+        s1, s2 = env.game1.score, env.game2.score
+        scores1.append(s1)
+        scores2.append(s2)
+        lines1.append(env.game1.lines_cleared)
+        lines2.append(env.game2.lines_cleared)
+    return scores1, scores2, lines1, lines2
 
 
 def main():
@@ -40,20 +41,15 @@ def main():
     args = parser.parse_args()
     # 初始化 DQN 代理并加载权重
     agent = DQNAgent(lr=args.lr, gamma=args.gamma, epsilon=args.epsilon, hidden_dim=args.hidden)
-    weight_file = 'dqn_weights.pkl'
+    weight_file = 'double_dqn_weights.pkl'
     if os.path.exists(weight_file):
         agent.load_weights(weight_file)
         print(f"已加载 DQN 权重：{weight_file}")
-    # 评估
-    scores, line_counts = evaluate(agent, episodes=args.episodes, render=args.render)
-    # 输出平均分
-    print(f"DQN 平均分: {sum(scores)/len(scores):.2f}")
-    # 输出消除行数最多和最少的5次
-    sorted_lines = sorted(line_counts)
-    min5 = sorted_lines[:5]
-    max5 = sorted_lines[-5:][::-1]
-    print(f"消除行数最少的5次: {min5}")
-    print(f"消除行数最多的5次: {max5}")
+    # 对 Double Tetris 两棋盘进行评估
+    scores1, scores2, lines1, lines2 = evaluate(agent, episodes=args.episodes, render=args.render)
+    print(f"DQN 双Tetris 评估 ({args.episodes} 回合):")
+    print(f"  Game1 平均分: {sum(scores1)/len(scores1):.2f}, 消行最少: {min(lines1)}, 消行最多: {max(lines1)}")
+    print(f"  Game2 平均分: {sum(scores2)/len(scores2):.2f}, 消行最少: {min(lines2)}, 消行最多: {max(lines2)}")
 
 
 if __name__ == '__main__':

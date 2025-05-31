@@ -6,9 +6,9 @@ import torch.optim as optim
 from collections import deque
 from .base_agent import BaseAgent
 from tetris.pieces import PIECES
-from tetris.game import TetrisGame
-from tetris.utils import extract_features
+from tetris.game import TetrisGame, DoubleTetrisGame
 import copy
+from tetris.utils import extract_features
 
 
 class DQNNet(nn.Module):
@@ -46,7 +46,7 @@ class DQNNet(nn.Module):
 
 
 class DQNAgent(BaseAgent):
-    """基于 PyTorch 的 Deep Q-Network 代理"""
+    """基于 PyTorch 的 Deep Q-Network 代理，支持 Double Tetris"""
     def __init__(self, width=10, height=20,
                  lr=1e-4, gamma=0.99, epsilon=1.0,
                  epsilon_min=0.01, memory_size=50000,
@@ -54,11 +54,13 @@ class DQNAgent(BaseAgent):
                  target_update=250):
         self.width = width
         self.height = height
-        # 特征维度
+        # 假设双棋盘
+        self.num_boards = 2
+        # 特征维度（双棋盘特征拼接）
         dummy = np.zeros((height, width), dtype=int)
         feats = extract_features(dummy)
         self.feature_keys = sorted(feats.keys())
-        self.state_dim = len(self.feature_keys)
+        self.state_dim = len(self.feature_keys) * self.num_boards
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -77,51 +79,57 @@ class DQNAgent(BaseAgent):
         self.loss_fn = nn.MSELoss()
         self.step_count = 0
 
-    def _encode_state(self, board):
-        """基于 extract_features 提取特征向量"""
-        feats = extract_features(board)
-        vec = np.array([feats[k] for k in self.feature_keys], dtype=np.float32)
-        return torch.from_numpy(vec).unsqueeze(0).to(self.device)
+    def _encode_state(self, state):
+        """拼接单/双棋盘特征：双棋盘为左右拼接，拆分后分别提特征再合并"""
+        # state: np.ndarray, shape (h, w) 或 (h, 2*w)
+        if isinstance(state, np.ndarray) and state.ndim == 2 and state.shape[1] == self.width * 2:
+            left, right = state[:, :self.width], state[:, self.width:]
+            boards = [left, right]
+        else:
+            boards = [state]
+        vec_list = []
+        for b in boards:
+            feats = extract_features(b)
+            vec_list += [feats[k] for k in self.feature_keys]
+        arr = np.array(vec_list, dtype=np.float32)
+        return torch.from_numpy(arr).unsqueeze(0).to(self.device)
 
     def _actions(self, env: TetrisGame):
-        # 返回当前合法宏观动作列表
-        rotations = list(range(len(PIECES[env.current_piece])))
-        actions = []
-        for rot in rotations:
-            shape = PIECES[env.current_piece][rot]
-            for x in range(env.width - shape.shape[1] + 1):
-                actions.append((rot, x))
-        return actions
+        """返回当前合法宏观动作列表，兼容单/双棋盘：
+           双棋盘时取两侧动作集合的交集"""
+        def single_actions(game):
+            piece = game.current_piece
+            width = game.width
+            acts = []
+            for rot in range(len(PIECES[piece])):
+                shape = PIECES[piece][rot]
+                for x in range(width - shape.shape[1] + 1):
+                    acts.append((rot, x))
+            return acts
+
+        if isinstance(env, DoubleTetrisGame):
+            a1 = set(single_actions(env.game1))
+            a2 = set(single_actions(env.game2))
+            return list(a1 & a2)
+        else:
+            return single_actions(env)
 
     def act(self, state, env: TetrisGame):
-        """基于枚举宏观动作的 epsilon-greedy 策略"""
-        # 枚举所有合法宏观动作
+        """支持 DoubleTetrisGame 的 epsilon-greedy 策略"""
         valid_actions = self._actions(env)
-        # 计算每个动作对应的下一个状态特征
         feats = []
         for action in valid_actions:
-            # 手动拷贝核心游戏状态，避免 deepcopy Pygame 对象
-            env_copy = TetrisGame(env.width, env.height)
-            env_copy.board = env.board.copy()
-            env_copy.current_piece = env.current_piece
-            env_copy.current_rot = env.current_rot
-            env_copy.current_x = env.current_x
-            env_copy.current_y = env.current_y
-            env_copy.done = env.done
-            env_copy.lines_cleared = env.lines_cleared
-            env_copy.score = env.score
-            next_obs, _, done, _ = env_copy.step(action)
-            feat = extract_features(next_obs)
-            vec = np.array([feat[k] for k in self.feature_keys], dtype=np.float32)
-            feats.append(torch.from_numpy(vec).unsqueeze(0))
+            env_copy = copy.deepcopy(env)
+            next_state, _, done, _ = env_copy.step(action)
+            feats.append(self._encode_state(next_state))
         next_states = torch.cat(feats, dim=0).to(self.device)
-        # epsilon-greedy 选择
+
         if random.random() < self.epsilon:
-            idx = random.randint(0, len(valid_actions) - 1)
+            idx = random.randrange(len(valid_actions))
         else:
             with torch.no_grad():
                 q_values = self.policy_net(next_states).squeeze(1)
-                idx = int(torch.argmax(q_values).cpu().item())
+                idx = int(q_values.argmax().item())
         return valid_actions[idx]
 
     def learn(self, state, action, reward, next_state, done, env=None):

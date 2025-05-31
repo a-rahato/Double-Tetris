@@ -1,7 +1,7 @@
 """
 game.py: 定义俄罗斯方块核心游戏逻辑。
 """
-
+import copy
 import numpy as np
 import random
 from .pieces import PIECES
@@ -290,6 +290,13 @@ class DoubleTetrisGame:
         self.height = height
         self.block_size = BLOCK_SIZE
 
+    def __deepcopy__(self, memo):
+        """拷贝双棋盘环境，忽略 GUI Surface"""
+        new = DoubleTetrisGame(self.game1.width, self.game1.height)
+        new.game1 = copy.deepcopy(self.game1, memo)
+        new.game2 = copy.deepcopy(self.game2, memo)
+        return new
+    
     def reset(self):
         """重置两个游戏并返回拼接后的初始观测。"""
         obs1 = self.game1.reset()
