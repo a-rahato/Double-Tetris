@@ -3,6 +3,8 @@ evaluate.py: 验证脚本，对比不同 Agent 表现并渲染示例游戏。
 """
 import argparse
 import os  # 用于加载权重
+import matplotlib.pyplot as plt
+from datetime import datetime
 from tetris.game import DoubleTetrisGame
 from agents.ddqn_agent import DDQNAgent  # DDQN 验证
 
@@ -65,6 +67,22 @@ def main():
     max5 = sorted_lines[-5:][::-1]
     print(f"消除行数最少的5次: {min5}")
     print(f"消除行数最多的5次: {max5}")
+    # 绘制并保存消行次数直方图（x=消行数, y=出现次数）
+    from collections import Counter
+    counter = Counter(line_counts)
+    xs = sorted(counter.keys())
+    ys = [counter[x] for x in xs]
+    os.makedirs('plots', exist_ok=True)
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.bar(xs, ys, color='skyblue')
+    ax.set_xlabel('cleared lines')
+    ax.set_ylabel('numbers')
+    ax.set_title('Cleared Lines Histogram')
+    plt.tight_layout()
+    hist_path = os.path.join('plots', f'evaluate_lines_hist_{ts}.png')
+    fig.savefig(hist_path)
+    print(f"已保存消行次数直方图到 {hist_path}")
 
 
 if __name__ == '__main__':
