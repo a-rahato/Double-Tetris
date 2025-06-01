@@ -25,7 +25,8 @@ def main():
             elif event.type == DROP_EVENT:
                 _, _, done, _ = env.step(None)
                 if done:
-                    running = False
+                    # 游戏结束后保持窗口，自动重置游戏
+                    env.reset()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_LEFT:
                     env.step(0)
@@ -41,7 +42,7 @@ def main():
         env.render(mode='gui', delay=0)
         clock.tick(60)
     pygame.quit()
-    sys.exit()
+    # sys.exit()  # 不要自动退出解释器，窗口关闭后程序结束
 
 
 if __name__ == '__main__':

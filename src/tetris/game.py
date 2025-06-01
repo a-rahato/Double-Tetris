@@ -4,6 +4,7 @@ game.py: 定义俄罗斯方块核心游戏逻辑。
 
 import numpy as np
 import random
+import time
 from .pieces import PIECES
 # 增加颜色映射
 PIECE_COLORS = {
@@ -28,7 +29,7 @@ except ImportError:
 BLOCK_SIZE = 30  # 方块像素大小
 CLEAR_REWARD = 1  # 每行清除奖励
 GAME_OVER_PENALTY = 2  # 游戏结束小惩罚
-SURVIVAL_REWARD = 0  # 无生存奖励
+SURVIVAL_REWARD = 0.01  # 微小生存奖励，鼓励延长游戏
 
 class TetrisGame:
     """代表一个俄罗斯方块游戏环境。"""
@@ -54,6 +55,7 @@ class TetrisGame:
         self.board.fill(0)
         self.score = 0
         self.done = False
+        self.lines_cleared = 0  # 重置消行计数，防止跨回合继承
         self._spawn_piece()
         self.needs_spawn = False
         return self._get_observation()
@@ -221,7 +223,8 @@ class TetrisGame:
 
     def _spawn_piece(self):
         self.current_piece = random.choice(list(PIECES.keys()))
-        self.current_rot = 0
+        # 随机初始旋转，使两区同步旋转时方向可不同
+        self.current_rot = random.randrange(len(PIECES[self.current_piece]))
         shape = PIECES[self.current_piece][self.current_rot]
         self.current_y = 0
         self.current_x = (self.width - shape.shape[1]) // 2
@@ -278,8 +281,6 @@ class TetrisGame:
 class DoubleTetrisGame:
     """代表双区域同时游戏，每区域独立生成方块，操作同步。"""
     def __init__(self, width=10, height=20):
-        from .game import TetrisGame
-        import pygame
         # 初始化两个单区游戏
         self.game1 = TetrisGame(width, height)
         self.game2 = TetrisGame(width, height)
@@ -294,7 +295,7 @@ class DoubleTetrisGame:
         """重置两个游戏并返回拼接后的初始观测。"""
         obs1 = self.game1.reset()
         obs2 = self.game2.reset()
-        # 横向拼接
+        # 横向拼接返回单一观测数组
         return np.hstack([obs1, obs2])
 
     def step(self, action):
@@ -322,7 +323,7 @@ class DoubleTetrisGame:
         total_reward = r1 + r2
         # 整体结束只要有一侧结束
         done = self.game1.done or self.game2.done
-        # 合并观测
+        # 合并观测，统一为单个数组
         obs = np.hstack([obs1, obs2])
         info = {'game1': info1, 'game2': info2}
         return obs, total_reward, done, info
@@ -338,7 +339,12 @@ class DoubleTetrisGame:
                 print(line1 + '  ' + line2)
             print(f"Scores: {self.game1.score} | {self.game2.score}")
         elif mode == 'gui':
+            # 先处理事件，避免窗口无响应
             import pygame
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
             # 初始化 GUI 窗口
             if self.screen is None:
                 self._init_gui()

@@ -6,12 +6,13 @@ from typing import Tuple
 
 def clear_lines(board: np.ndarray) -> tuple[np.ndarray, int]:
     """
-    清除已满的行，向上移动，返回 (new_board, lines_cleared)，不修改输入。
+    清除已满的行，向上移动，返回 (new_board, lines_cleared)，仅处理单一区域板面。
     """
+    h, w = board.shape
     full_rows = [i for i, row in enumerate(board) if all(row)]
     n = len(full_rows)
     if n > 0:
-        mask = [i for i in range(board.shape[0]) if i not in full_rows]
+        mask = [i for i in range(h) if i not in full_rows]
         new_board = np.zeros_like(board)
         if mask:
             new_board[-len(mask):] = board[mask]
@@ -20,10 +21,12 @@ def clear_lines(board: np.ndarray) -> tuple[np.ndarray, int]:
     return new_board, n
 
 
-def extract_features(board: np.ndarray) -> dict:
+def _extract_features(board: np.ndarray) -> dict:
     """
-    特征：本次消行数、孔洞总数、颠簸度、总高度（不修改原棋盘）
+    特征：本次消行数、孔洞总数、颠簸度、总高度。
     """
+    h, w = board.shape
+    # 单区板面逻辑
     # 复制棋盘，用于行清除和后续统计
     board_cp = board.copy()
     # 1. 清除满行，得到新棋盘与消行数
@@ -55,3 +58,24 @@ def extract_features(board: np.ndarray) -> dict:
         'bumpiness': bumpiness,
         'aggregate_height': total_height
     }
+
+def extract_features(board: np.ndarray) -> dict:
+    """
+    将拼接的双区棋盘拆分为左右两块，分别调用 `_extract_features`，
+    并将左右特征用 `_L` 和 `_R` 后缀标记后返回。
+    """
+    h, w = board.shape
+    # 拆分左右子棋盘
+    half = w // 2
+    boardL = board[:, :half]
+    boardR = board[:, half:]
+    # 分别提取特征
+    featsL = _extract_features(boardL)
+    featsR = _extract_features(boardR)
+    # 合并并加后缀
+    combined = {}
+    for k, v in featsL.items():
+        combined[f"{k}_L"] = v
+    for k, v in featsR.items():
+        combined[f"{k}_R"] = v
+    return combined
