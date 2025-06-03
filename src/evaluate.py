@@ -3,6 +3,8 @@ evaluate.py: 验证脚本，对比不同 Agent 表现并渲染示例游戏。
 """
 import argparse
 import os  # 用于加载权重
+import matplotlib.pyplot as plt  # 用于绘制直方图
+from datetime import datetime  # 用于生成时间戳
 from tetris.game import TetrisGame
 from agents.dqn_agent import DQNAgent  # 仅保留 DQN 验证
 
@@ -54,6 +56,19 @@ def main():
     max5 = sorted_lines[-5:][::-1]
     print(f"消除行数最少的5次: {min5}")
     print(f"消除行数最多的5次: {max5}")
+    # 绘制消行次数分布直方图
+    plots_dir = 'plots'
+    os.makedirs(plots_dir, exist_ok=True)
+    plt.figure()
+    bins = range(min(line_counts), max(line_counts) + 2)
+    plt.hist(line_counts, bins=bins, align='left', color='tab:green', edgecolor='black')
+    plt.xlabel('Lines Cleared')
+    plt.ylabel('Frequency')
+    plt.title('Distribution of Lines Cleared')
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    hist_path = os.path.join(plots_dir, f'clear_lines_hist_{ts}.png')
+    plt.savefig(hist_path)
+    print(f'已保存消行次数分布直方图到 {hist_path}')
 
 
 if __name__ == '__main__':
